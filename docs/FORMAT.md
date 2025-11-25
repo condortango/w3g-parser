@@ -290,6 +290,8 @@ for each control byte:
 ## Unknown/Undocumented
 
 - Block 0x23: Unknown structure, appears in some replays
-- Action 0x1B: Unknown, 10 bytes, appears frequently
+- Action 0x1B: Selection sync/verification (10 bytes), doesn't count for APM
+  - Structure: 1 byte flag (0x01) + 4 bytes ObjectID1 + 4 bytes ObjectID2
+  - Appears frequently in Reforged replays, possibly trigger-related
 - Action 0x75: Unknown, 2 bytes
 - Various checksum algorithms are not documented

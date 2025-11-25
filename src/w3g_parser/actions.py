@@ -257,7 +257,7 @@ ACTION_NAMES: dict[int, str] = {
     ACTION_SELECT_GROUP: "select_group",
     ACTION_SELECT_SUBGROUP: "select_subgroup",
     ACTION_PRE_SUBSELECTION: "pre_subselection",
-    ACTION_UNKNOWN_1B: "unknown_1b",
+    ACTION_UNKNOWN_1B: "sync_selection",  # Selection verification/sync (doesn't count for APM)
     ACTION_SELECT_GROUND_ITEM: "select_item",
     ACTION_CANCEL_HERO_REVIVAL: "cancel_revival",
     ACTION_REMOVE_FROM_QUEUE: "remove_from_queue",
@@ -453,7 +453,19 @@ def parse_action(
             pass  # 1 byte total
 
         elif action_id == ACTION_UNKNOWN_1B:
-            offset += 9
+            # Sync/selection verification action (10 bytes total)
+            # 1 byte: flag (always 0x01)
+            # 4 bytes: ObjectID1
+            # 4 bytes: ObjectID2 (usually same as ObjectID1)
+            if offset + 9 <= len(data):
+                action_data["flag"] = data[offset]
+                offset += 1
+                action_data["object_id_1"] = struct.unpack_from("<I", data, offset)[0]
+                offset += 4
+                action_data["object_id_2"] = struct.unpack_from("<I", data, offset)[0]
+                offset += 4
+            else:
+                offset += 9
 
         elif action_id == ACTION_SELECT_GROUND_ITEM:
             # 1 byte: flags

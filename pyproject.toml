@@ -55,3 +55,11 @@ strict = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv.sources]
+w3g-parser = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "w3g-parser",
+]
