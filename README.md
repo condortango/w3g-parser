@@ -59,25 +59,31 @@ for action in parser.iter_actions("large_replay.w3g"):
 
 ```bash
 # Parse and display replay info
-w3g-parse parse replay.w3g
+uv run w3g-parse parse replay.w3g
 
 # Output as JSON
-w3g-parse parse replay.w3g --format json
+uv run w3g-parse parse replay.w3g --format json
 
 # Show player information
-w3g-parse players replay.w3g
+uv run w3g-parse players replay.w3g
 
 # Show chat messages
-w3g-parse chat replay.w3g
+uv run w3g-parse chat replay.w3g
 
 # Quick header info (fast)
-w3g-parse info replay.w3g
+uv run w3g-parse info replay.w3g
 
 # Show actions
-w3g-parse actions replay.w3g
+uv run w3g-parse actions replay.w3g
+
+# Show detailed actions with decoded unit/ability names and coordinates
+uv run w3g-parse actions replay.w3g --detail
+
+# Filter actions by type (e.g., building placements)
+uv run w3g-parse actions replay.w3g --detail --filter ability_position
 
 # Batch process multiple replays
-w3g-parse batch *.w3g --output results.json
+uv run w3g-parse batch *.w3g --output results.json
 ```
 
 ## Supported Versions
