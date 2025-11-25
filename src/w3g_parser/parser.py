@@ -190,12 +190,27 @@ class W3GParser:
 
         # Reforged replays have extra player metadata between player records
         # and the GameStartRecord (0x19). Skip to find it.
-        if offset < len(data) and data[offset] != 0x19:
-            # Search for GameStartRecord marker
+        # We need to validate the 0x19 is actually a GameStartRecord by checking
+        # that num_bytes > 0 and num_slots is reasonable (2-24 players)
+        def is_valid_game_start_record(d: bytes, o: int) -> bool:
+            """Check if offset points to a valid GameStartRecord."""
+            if o + 4 > len(d) or d[o] != 0x19:
+                return False
+            num_bytes = struct.unpack_from("<H", d, o + 1)[0]
+            if num_bytes < 10 or num_bytes > 500:  # Reasonable range
+                return False
+            num_slots = d[o + 3]
+            return 2 <= num_slots <= 24
+
+        if offset < len(data) and not is_valid_game_start_record(data, offset):
+            # Search for valid GameStartRecord marker
             search_offset = offset
-            while search_offset < len(data) - 1 and data[search_offset] != 0x19:
+            while search_offset < len(data) - 4:
+                if data[search_offset] == 0x19:
+                    if is_valid_game_start_record(data, search_offset):
+                        break
                 search_offset += 1
-            if search_offset < len(data) and data[search_offset] == 0x19:
+            if search_offset < len(data) and is_valid_game_start_record(data, search_offset):
                 offset = search_offset
 
         # Parse GameStartRecord (0x19)
