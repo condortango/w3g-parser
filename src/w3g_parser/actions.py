@@ -412,26 +412,44 @@ def parse_action(
         elif action_id == ACTION_CHANGE_SELECTION:
             # 1 byte: select mode (1=add, 2=remove)
             # 1 word: unit count
-            # n * 8 bytes: object IDs
+            # n * 8 bytes: object IDs (2 dwords per unit)
             if offset + 3 <= len(data):
                 action_data["select_mode"] = data[offset]
                 offset += 1
                 unit_count = struct.unpack_from("<H", data, offset)[0]
                 offset += 2
                 action_data["unit_count"] = unit_count
-                offset += unit_count * 8
+                # Parse object IDs
+                object_ids = []
+                for _ in range(unit_count):
+                    if offset + 8 <= len(data):
+                        obj_id = struct.unpack_from("<I", data, offset)[0]
+                        object_ids.append(obj_id)
+                        offset += 8  # Skip both dwords (obj_id1 and obj_id2)
+                    else:
+                        break
+                action_data["object_ids"] = object_ids
 
         elif action_id == ACTION_ASSIGN_GROUP:
             # 1 byte: group number
             # 1 word: unit count
-            # n * 8 bytes: object IDs
+            # n * 8 bytes: object IDs (2 dwords per unit)
             if offset + 3 <= len(data):
                 action_data["group"] = data[offset]
                 offset += 1
                 unit_count = struct.unpack_from("<H", data, offset)[0]
                 offset += 2
                 action_data["unit_count"] = unit_count
-                offset += unit_count * 8
+                # Parse object IDs
+                object_ids = []
+                for _ in range(unit_count):
+                    if offset + 8 <= len(data):
+                        obj_id = struct.unpack_from("<I", data, offset)[0]
+                        object_ids.append(obj_id)
+                        offset += 8
+                    else:
+                        break
+                action_data["object_ids"] = object_ids
 
         elif action_id == ACTION_SELECT_GROUP:
             # 1 byte: group number

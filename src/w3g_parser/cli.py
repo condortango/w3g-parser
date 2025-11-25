@@ -230,12 +230,20 @@ def actions(replay: str, limit: int, detail: bool, action_filter: str | None):
                     if x == x and y == y:  # Check for NaN
                         detail_parts.append(f"at ({x:.0f}, {y:.0f})")
 
-                # Add unit count with select mode
+                # Add unit count with select mode and object IDs
                 if "unit_count" in action.data:
                     count = action.data["unit_count"]
                     mode = action.data.get("select_mode", 0)
                     mode_str = "+" if mode == 1 else "-" if mode == 2 else ""
-                    detail_parts.append(f"{mode_str}{count} unit(s)")
+                    obj_ids = action.data.get("object_ids", [])
+                    if obj_ids:
+                        # Show object IDs in hex (shorter format)
+                        ids_str = ",".join(f"{oid:x}" for oid in obj_ids[:5])
+                        if len(obj_ids) > 5:
+                            ids_str += f"...+{len(obj_ids)-5}"
+                        detail_parts.append(f"{mode_str}{count} unit(s) [{ids_str}]")
+                    else:
+                        detail_parts.append(f"{mode_str}{count} unit(s)")
 
                 # Add group number
                 if "group" in action.data:
