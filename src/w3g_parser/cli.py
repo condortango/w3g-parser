@@ -230,10 +230,12 @@ def actions(replay: str, limit: int, detail: bool, action_filter: str | None):
                     if x == x and y == y:  # Check for NaN
                         detail_parts.append(f"at ({x:.0f}, {y:.0f})")
 
-                # Add unit count
+                # Add unit count with select mode
                 if "unit_count" in action.data:
                     count = action.data["unit_count"]
-                    detail_parts.append(f"{count} unit(s)")
+                    mode = action.data.get("select_mode", 0)
+                    mode_str = "+" if mode == 1 else "-" if mode == 2 else ""
+                    detail_parts.append(f"{mode_str}{count} unit(s)")
 
                 # Add group number
                 if "group" in action.data:
