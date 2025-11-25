@@ -1,89 +1,112 @@
 # W3G Parser
 
-A flexible Warcraft 3 replay (.w3g) parser supporting Classic and Reforged versions.
+A flexible Warcraft 3 replay (.w3g) parser written in Go, supporting Classic and Reforged versions.
 
 ## Installation
 
+### From Source
+
 ```bash
-pip install w3g-parser
+go install github.com/condor/w3g-parser/cmd/w3g-parse@latest
 ```
 
-Or with uv:
+### Build Locally
 
 ```bash
-uv add w3g-parser
+git clone https://github.com/condor/w3g-parser.git
+cd w3g-parser
+go build ./cmd/w3g-parse
 ```
 
 ## Usage
 
-### Python API
+### Go API
 
-```python
-from w3g_parser import W3GParser, W3GReplay
+```go
+package main
 
-# Simple usage via class method
-replay = W3GReplay.parse("my_replay.w3g")
+import (
+    "fmt"
+    "log"
 
-# Or use parser instance for more control
-parser = W3GParser(strict=False)
-replay = parser.parse("my_replay.w3g")
+    "github.com/condor/w3g-parser/pkg/w3g"
+)
 
-# Access parsed data
-print(f"Game: {replay.game_name}")
-print(f"Map: {replay.map_name}")
-print(f"Duration: {replay.header.duration}")
-print(f"Version: {replay.header.version_string}")
+func main() {
+    // Simple usage - parse a file
+    parser := w3g.NewParser()
+    replay, err := parser.Parse("my_replay.w3g")
+    if err != nil {
+        log.Fatal(err)
+    }
 
-# Players
-for player in replay.players:
-    print(f"  {player.name} ({player.race.name}) - APM: {player.apm:.1f}")
+    // Access parsed data
+    fmt.Printf("Game: %s\n", replay.GameName)
+    fmt.Printf("Map: %s\n", replay.MapName)
+    fmt.Printf("Duration: %s\n", replay.Header.Duration())
+    fmt.Printf("Version: %s\n", replay.Header.VersionString())
 
-# Chat log
-for chat in replay.chat_messages:
-    print(f"[{chat.timestamp}] {chat.player_name}: {chat.message}")
+    // Players
+    for _, player := range replay.Players {
+        fmt.Printf("  %s (%s) - APM: %.1f\n",
+            player.Name, player.Race.String(), player.APM)
+    }
 
-# Export to JSON
-replay.to_json("output.json")
-data = replay.to_dict()
+    // Chat log
+    for _, chat := range replay.ChatMessages {
+        fmt.Printf("[%s] %s: %s\n",
+            chat.Timestamp(), chat.PlayerName, chat.Message)
+    }
 
-# Quick header check (no full parse)
-header = W3GParser().parse_header_only("replay.w3g")
-print(f"Version: {header.version_string}, Duration: {header.duration}")
+    // Export to JSON
+    jsonData, _ := replay.ToJSON(true)
+    fmt.Println(string(jsonData))
 
-# Memory-efficient action iteration
-for action in parser.iter_actions("large_replay.w3g"):
-    print(action.action_name)
+    // Quick header check (no full parse)
+    header, _ := parser.ParseHeaderOnly("replay.w3g")
+    fmt.Printf("Version: %s, Duration: %s\n",
+        header.VersionString(), header.Duration())
+
+    // Memory-efficient action iteration
+    actionCh, errCh := parser.IterActions("large_replay.w3g")
+    for action := range actionCh {
+        fmt.Printf("%s: %s\n", action.ActionName, action.Timestamp())
+    }
+    if err := <-errCh; err != nil {
+        log.Fatal(err)
+    }
+}
 ```
 
 ### Command-Line Interface
 
 ```bash
 # Parse and display replay info
-uv run w3g-parse parse replay.w3g
+./w3g-parse parse replay.w3g
 
 # Output as JSON
-uv run w3g-parse parse replay.w3g --format json
+./w3g-parse parse replay.w3g --format json
 
 # Show player information
-uv run w3g-parse players replay.w3g
+./w3g-parse players replay.w3g
 
 # Show chat messages
-uv run w3g-parse chat replay.w3g
+./w3g-parse chat replay.w3g
 
 # Quick header info (fast)
-uv run w3g-parse info replay.w3g
+./w3g-parse info replay.w3g
 
 # Show actions
-uv run w3g-parse actions replay.w3g
+./w3g-parse actions replay.w3g
 
 # Show detailed actions with decoded unit/ability names and coordinates
-uv run w3g-parse actions replay.w3g --detail
+./w3g-parse actions replay.w3g --detail
 
 # Filter actions by type (e.g., building placements)
-uv run w3g-parse actions replay.w3g --detail --filter ability_position
+./w3g-parse actions replay.w3g --detail -F ability_position
 
 # Batch process multiple replays
-uv run w3g-parse batch *.w3g --output results.json
+./w3g-parse batch *.w3g --output results.json
 ```
 
 ## Supported Versions
@@ -95,6 +118,34 @@ uv run w3g-parse batch *.w3g --output results.json
 ## Format Documentation
 
 See [docs/FORMAT.md](docs/FORMAT.md) for detailed binary format documentation.
+
+## Project Structure
+
+```
+w3g-parser/
+├── cmd/
+│   └── w3g-parse/
+│       └── main.go             # CLI entry point
+├── pkg/
+│   └── w3g/
+│       ├── w3g.go              # Public API exports
+│       ├── parser.go           # Main parser orchestration
+│       ├── models.go           # Data structures and types
+│       ├── header.go           # Header parsing logic
+│       ├── decompressor.go     # Block decompression
+│       ├── actions.go          # Game action parsing
+│       ├── chat.go             # Chat message parsing
+│       ├── players.go          # Player data parsing
+│       ├── encoded.go          # Encoded string decoding
+│       ├── constants.go        # Magic bytes, action IDs, etc.
+│       └── errors.go           # Custom error types
+├── docs/
+│   └── FORMAT.md               # Binary format documentation
+├── go.mod
+├── go.sum
+├── README.md
+└── LICENSE
+```
 
 ## License
 

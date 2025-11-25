@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document serves as a comprehensive prompt for an LLM to create a robust Warcraft 3 replay (.w3g) parser in Python. There is NO official documentation for this format, so the implementation must heavily rely on reverse-engineering, inference, and research from existing implementations.
+This document serves as a comprehensive prompt for an LLM to create a robust Warcraft 3 replay (.w3g) parser in Go. There is NO official documentation for this format, so the implementation must heavily rely on reverse-engineering, inference, and research from existing implementations.
 
 ---
 
@@ -100,632 +100,1121 @@ CHAT MESSAGES:
 
 ## Implementation Requirements
 
-### Project Structure (uv/Modern Python Standards)
+### Project Structure (Go Module)
 
 ```
 w3g-parser/
-├── pyproject.toml              # uv/PEP 621 compliant
-├── uv.lock                     # Lock file (generated)
-├── src/
-│   └── w3g_parser/
-│       ├── __init__.py         # Public API exports
-│       ├── parser.py           # Main parser orchestration
-│       ├── models.py           # Pydantic/dataclass models
-│       ├── header.py           # Header parsing logic
-│       ├── decompressor.py     # Block decompression
-│       ├── actions.py          # Game action parsing
-│       ├── chat.py             # Chat message parsing
-│       ├── players.py          # Player data parsing
-│       ├── versions.py         # Version detection & handling
-│       ├── constants.py        # Magic bytes, action IDs, etc.
-│       ├── exceptions.py       # Custom exceptions
-│       └── cli.py              # Command-line interface
+├── go.mod                      # Go module definition
+├── go.sum                      # Dependency checksums
+├── cmd/
+│   └── w3g-parse/
+│       └── main.go             # CLI entry point
+├── pkg/
+│   └── w3g/
+│       ├── w3g.go              # Public API exports
+│       ├── parser.go           # Main parser orchestration
+│       ├── models.go           # Data structures and types
+│       ├── header.go           # Header parsing logic
+│       ├── decompressor.go     # Block decompression
+│       ├── actions.go          # Game action parsing
+│       ├── chat.go             # Chat message parsing
+│       ├── players.go          # Player data parsing
+│       ├── encoded.go          # Encoded string decoding
+│       ├── constants.go        # Magic bytes, action IDs, etc.
+│       └── errors.go           # Custom error types
+├── internal/
+│   └── binary/
+│       └── reader.go           # Binary reading utilities
 ├── tests/
-│   ├── __init__.py
-│   ├── conftest.py             # Pytest fixtures
-│   ├── test_parser.py
-│   ├── test_header.py
-│   ├── test_decompressor.py
-│   ├── test_actions.py
-│   └── test_versions.py
+│   ├── parser_test.go
+│   ├── header_test.go
+│   ├── decompressor_test.go
+│   ├── actions_test.go
+│   └── testdata/               # Sample replay files
 ├── docs/
 │   └── FORMAT.md               # Discovered format documentation
 ├── README.md
 └── LICENSE
 ```
 
-### pyproject.toml Template
+### go.mod Template
 
-```toml
-[project]
-name = "w3g-parser"
-version = "0.1.0"
-description = "A flexible Warcraft 3 replay (.w3g) parser supporting Classic and Reforged"
-readme = "README.md"
-license = { text = "MIT" }
-requires-python = ">=3.11"
-authors = [
-    { name = "Your Name", email = "you@example.com" }
-]
-keywords = ["warcraft", "wc3", "replay", "parser", "w3g", "reforged"]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Games/Entertainment :: Real Time Strategy",
-]
+```go
+module github.com/yourusername/w3g-parser
 
-dependencies = [
-    "pydantic>=2.0",
-    "click>=8.0",
-]
+go 1.21
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "ruff>=0.1.0",
-    "mypy>=1.0",
-]
-
-[project.scripts]
-w3g-parse = "w3g_parser.cli:main"
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/w3g_parser"]
-
-[tool.ruff]
-target-version = "py311"
-line-length = 100
-select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
-
-[tool.mypy]
-python_version = "3.11"
-strict = true
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+require (
+    github.com/spf13/cobra v1.8.0
+)
 ```
 
 ---
 
 ## Code Requirements
 
-### 1. Version Detection & Handling
+### 1. Data Models (models.go)
 
-```python
-# Example architecture for version handling
+```go
+package w3g
 
-from abc import ABC, abstractmethod
-from enum import Enum
+import (
+    "encoding/json"
+    "time"
+)
 
-class W3GVersion(Enum):
-    CLASSIC_ROC = "roc"           # Reign of Chaos
-    CLASSIC_TFT = "tft"           # The Frozen Throne (pre-1.32)
-    REFORGED = "reforged"         # 1.32+
-    UNKNOWN = "unknown"
+// Race represents a player's race
+type Race uint8
 
-class VersionHandler(ABC):
-    """Abstract base for version-specific parsing logic."""
-    
-    @abstractmethod
-    def parse_header(self, data: bytes) -> "ReplayHeader":
-        ...
-    
-    @abstractmethod
-    def parse_player_record(self, data: bytes, offset: int) -> tuple["PlayerInfo", int]:
-        ...
-    
-    @abstractmethod
-    def parse_action(self, action_id: int, data: bytes, offset: int) -> tuple["GameAction", int]:
-        ...
+const (
+    RaceHuman    Race = 0x01
+    RaceOrc      Race = 0x02
+    RaceNightElf Race = 0x04
+    RaceUndead   Race = 0x08
+    RaceRandom   Race = 0x20
+    RaceUnknown  Race = 0xFF
+)
 
-class ClassicHandler(VersionHandler):
-    """Handler for Classic WC3 replays (pre-1.32)."""
-    ...
+func (r Race) String() string {
+    switch r {
+    case RaceHuman:
+        return "Human"
+    case RaceOrc:
+        return "Orc"
+    case RaceNightElf:
+        return "NightElf"
+    case RaceUndead:
+        return "Undead"
+    case RaceRandom:
+        return "Random"
+    default:
+        return "Unknown"
+    }
+}
 
-class ReforgedHandler(VersionHandler):
-    """Handler for Reforged replays (1.32+)."""
-    ...
+// RaceFromFlags converts race flags byte to Race
+func RaceFromFlags(flags uint8) Race {
+    switch {
+    case flags&0x01 != 0:
+        return RaceHuman
+    case flags&0x02 != 0:
+        return RaceOrc
+    case flags&0x04 != 0:
+        return RaceNightElf
+    case flags&0x08 != 0:
+        return RaceUndead
+    case flags&0x20 != 0:
+        return RaceRandom
+    default:
+        return RaceUnknown
+    }
+}
 
-def detect_version(header_bytes: bytes) -> tuple[W3GVersion, VersionHandler]:
-    """Auto-detect replay version from header magic/fields."""
-    ...
+// W3GVersion represents the replay version type
+type W3GVersion uint8
+
+const (
+    VersionClassicRoC W3GVersion = iota
+    VersionClassicTFT
+    VersionReforged
+    VersionUnknown
+)
+
+// SlotStatus represents slot status in game lobby
+type SlotStatus uint8
+
+const (
+    SlotEmpty  SlotStatus = 0x00
+    SlotClosed SlotStatus = 0x01
+    SlotUsed   SlotStatus = 0x02
+)
+
+// LeaveResult represents the result when player leaves
+type LeaveResult uint8
+
+const (
+    LeaveResultLeft        LeaveResult = 0x01
+    LeaveResultLeftAlt     LeaveResult = 0x07
+    LeaveResultLost        LeaveResult = 0x08
+    LeaveResultWon         LeaveResult = 0x09
+    LeaveResultDraw        LeaveResult = 0x0A
+    LeaveResultObserverLeft LeaveResult = 0x0B
+)
+
+func (r LeaveResult) String() string {
+    switch r {
+    case LeaveResultLeft, LeaveResultLeftAlt:
+        return "Left"
+    case LeaveResultLost:
+        return "Lost"
+    case LeaveResultWon:
+        return "Won"
+    case LeaveResultDraw:
+        return "Draw"
+    case LeaveResultObserverLeft:
+        return "ObserverLeft"
+    default:
+        return "Unknown"
+    }
+}
+
+// ReplayHeader contains W3G file header information
+type ReplayHeader struct {
+    Magic               []byte
+    HeaderSize          uint32
+    CompressedSize      uint32
+    HeaderVersion       uint32
+    DecompressedSize    uint32
+    NumCompressedBlocks uint32
+
+    // SubHeader fields
+    GameIdentifier string // 'WAR3', 'W3XP', 'PX3W'
+    Version        uint32
+    BuildNumber    uint16
+    Flags          uint16
+    DurationMs     uint32
+    CRC32          uint32
+
+    // Raw data
+    RawHeader []byte
+}
+
+// Duration returns replay duration as time.Duration
+func (h *ReplayHeader) Duration() time.Duration {
+    return time.Duration(h.DurationMs) * time.Millisecond
+}
+
+// IsMultiplayer returns true if replay is from multiplayer game
+func (h *ReplayHeader) IsMultiplayer() bool {
+    return h.Flags&0x8000 != 0
+}
+
+// IsReforged returns true if this is a Reforged replay
+func (h *ReplayHeader) IsReforged() bool {
+    return h.Version >= 29 || h.GameIdentifier == "PX3W"
+}
+
+// IsExpansion returns true if this is Frozen Throne or Reforged
+func (h *ReplayHeader) IsExpansion() bool {
+    return h.GameIdentifier == "W3XP" || h.GameIdentifier == "PX3W"
+}
+
+// VersionString returns human-readable version string
+func (h *ReplayHeader) VersionString() string {
+    if h.IsReforged() {
+        buildToVersion := map[uint16]string{
+            6105: "1.32.0", 6106: "1.32.1", 6108: "1.32.2",
+            6110: "1.32.3", 6111: "1.32.4", 6112: "1.32.5",
+            6113: "1.32.6", 6114: "1.32.7", 6115: "1.32.8",
+            6116: "1.32.9", 6117: "1.32.10", 6118: "1.33.0",
+            6119: "1.34.0", 6120: "1.35.0", 6121: "1.36.0",
+            6122: "1.36.1", 6123: "1.36.2",
+        }
+        if v, ok := buildToVersion[h.BuildNumber]; ok {
+            return v
+        }
+        return fmt.Sprintf("1.3x (build %d)", h.BuildNumber)
+    }
+
+    if h.Version >= 10000 {
+        major := h.Version / 10000
+        minor := (h.Version % 10000) / 100
+        patch := h.Version % 100
+        if patch > 0 {
+            return fmt.Sprintf("%d.%d.%d", major, minor, patch)
+        }
+        return fmt.Sprintf("%d.%d", major, minor)
+    }
+    return fmt.Sprintf("1.%d", h.Version)
+}
+
+// PlayerInfo contains information about a player
+type PlayerInfo struct {
+    ID          uint8
+    Name        string
+    Race        Race
+    Team        uint8
+    Color       uint8
+    Handicap    uint8
+    IsHost      bool
+    IsComputer  bool
+    IsObserver  bool
+    SlotStatus  SlotStatus
+    RuntimeMs   uint32    // For ladder games
+    ActionCount int
+    APM         float64
+    LeaveResult *LeaveResult
+    LeaveTimeMs *uint32
+}
+
+// GameSettings contains game configuration
+type GameSettings struct {
+    Speed             uint8  // 0=slow, 1=normal, 2=fast
+    Visibility        uint8
+    Observers         uint8
+    TeamsTogether     bool
+    LockTeams         bool
+    FullSharedControl bool
+    RandomHero        bool
+    RandomRaces       bool
+    Referees          bool
+    MapChecksum       []byte
+}
+
+// SpeedName returns human-readable speed name
+func (s *GameSettings) SpeedName() string {
+    names := []string{"Slow", "Normal", "Fast"}
+    if int(s.Speed) < len(names) {
+        return names[s.Speed]
+    }
+    return "Unknown"
+}
+
+// ChatMessage represents an in-game chat message
+type ChatMessage struct {
+    TimestampMs uint32
+    PlayerID    uint8
+    PlayerName  string
+    Message     string
+    Mode        uint32 // 0=all, 1=allies, 2=observers, 3+=specific player
+    IsStartup   bool
+}
+
+// Timestamp returns message timestamp as time.Duration
+func (c *ChatMessage) Timestamp() time.Duration {
+    return time.Duration(c.TimestampMs) * time.Millisecond
+}
+
+// ModeName returns human-readable mode name
+func (c *ChatMessage) ModeName() string {
+    switch c.Mode {
+    case 0:
+        return "All"
+    case 1:
+        return "Allies"
+    case 2:
+        return "Observers"
+    default:
+        return fmt.Sprintf("Player %d", c.Mode-2)
+    }
+}
+
+// GameAction represents a player action/command
+type GameAction struct {
+    TimestampMs uint32
+    PlayerID    uint8
+    ActionType  uint8
+    ActionName  string
+    Payload     []byte
+    Data        map[string]interface{}
+}
+
+// Timestamp returns action timestamp as time.Duration
+func (a *GameAction) Timestamp() time.Duration {
+    return time.Duration(a.TimestampMs) * time.Millisecond
+}
+
+// W3GReplay represents a complete parsed replay
+type W3GReplay struct {
+    Header        *ReplayHeader
+    GameName      string
+    MapName       string
+    MapPath       string
+    HostName      string
+    Settings      *GameSettings
+    Players       []*PlayerInfo
+    ChatMessages  []*ChatMessage
+    Actions       []*GameAction
+
+    // Raw data for advanced users
+    RawDecompressed []byte
+}
+
+// GetPlayer returns player by ID
+func (r *W3GReplay) GetPlayer(playerID uint8) *PlayerInfo {
+    for _, p := range r.Players {
+        if p.ID == playerID {
+            return p
+        }
+    }
+    return nil
+}
+
+// GetPlayerByName returns player by name (case-insensitive)
+func (r *W3GReplay) GetPlayerByName(name string) *PlayerInfo {
+    nameLower := strings.ToLower(name)
+    for _, p := range r.Players {
+        if strings.ToLower(p.Name) == nameLower {
+            return p
+        }
+    }
+    return nil
+}
+
+// Winner returns the winning player, if determinable
+func (r *W3GReplay) Winner() *PlayerInfo {
+    for _, p := range r.Players {
+        if p.LeaveResult != nil && *p.LeaveResult == LeaveResultWon {
+            return p
+        }
+    }
+    return nil
+}
+
+// ToJSON exports replay to JSON
+func (r *W3GReplay) ToJSON(indent bool) ([]byte, error) {
+    if indent {
+        return json.MarshalIndent(r.toDict(), "", "  ")
+    }
+    return json.Marshal(r.toDict())
+}
+
+func (r *W3GReplay) toDict() map[string]interface{} {
+    // Implementation for JSON serialization
+    // ...
+}
 ```
 
-### 2. Data Models
+### 2. Parser Structure (parser.go)
 
-Use dataclasses or Pydantic models for all structures:
+```go
+package w3g
 
-```python
-from dataclasses import dataclass, field
-from datetime import timedelta
-from enum import IntEnum
+import (
+    "io"
+    "os"
+)
 
-class Race(IntEnum):
-    HUMAN = 0x01
-    ORC = 0x02
-    NIGHT_ELF = 0x04
-    UNDEAD = 0x08
-    RANDOM = 0x20
-    # ... add others as discovered
+// Parser is the main W3G replay parser
+type Parser struct {
+    Strict bool // If true, fail on unknown data; otherwise skip and log
+}
 
-@dataclass
-class ReplayHeader:
-    """W3G file header information."""
-    magic: bytes
-    header_size: int
-    compressed_size: int
-    header_version: int
-    decompressed_size: int
-    num_compressed_blocks: int
-    version_string: str
-    build_number: int
-    flags: int  # Single player, multiplayer, etc.
-    duration_ms: int
-    crc32: int
-    
-    # Derived properties
-    @property
-    def duration(self) -> timedelta:
-        return timedelta(milliseconds=self.duration_ms)
+// NewParser creates a new parser instance
+func NewParser() *Parser {
+    return &Parser{Strict: false}
+}
 
-@dataclass
-class PlayerInfo:
-    """Information about a player in the replay."""
-    id: int
-    name: str
-    race: Race
-    team: int
-    color: int
-    handicap: int
-    is_host: bool = False
-    is_computer: bool = False
-    
-    # Computed during action parsing
-    actions: list["GameAction"] = field(default_factory=list)
-    apm: float = 0.0
+// Parse parses a complete replay file
+func (p *Parser) Parse(filepath string) (*W3GReplay, error) {
+    f, err := os.Open(filepath)
+    if err != nil {
+        return nil, err
+    }
+    defer f.Close()
 
-@dataclass
-class GameSettings:
-    """Game configuration and settings."""
-    speed: int  # 0=slow, 1=normal, 2=fast
-    visibility: int
-    observers: int
-    teams_together: bool
-    lock_teams: bool
-    full_shared_control: bool
-    random_hero: bool
-    random_races: bool
-    # ... other settings
+    return p.ParseStream(f)
+}
 
-@dataclass
-class ChatMessage:
-    """In-game chat message."""
-    timestamp_ms: int
-    player_id: int
-    player_name: str
-    message: str
-    mode: int  # All, allies, observers, etc.
-    
-    @property
-    def timestamp(self) -> timedelta:
-        return timedelta(milliseconds=self.timestamp_ms)
+// ParseStream parses a replay from an io.Reader
+func (p *Parser) ParseStream(r io.Reader) (*W3GReplay, error) {
+    // 1. Parse header
+    header, headerBytes, err := parseHeader(r)
+    if err != nil {
+        return nil, err
+    }
 
-@dataclass
-class GameAction:
-    """A player action/command."""
-    timestamp_ms: int
-    player_id: int
-    action_type: int
-    action_name: str
-    payload: bytes
-    # Parsed data varies by action type
-    data: dict = field(default_factory=dict)
+    // 2. Decompress all blocks
+    decompressed, err := decompressBlocks(r, header)
+    if err != nil {
+        return nil, err
+    }
 
-@dataclass
-class W3GReplay:
-    """Complete parsed replay."""
-    header: ReplayHeader
-    game_name: str
-    map_name: str
-    map_path: str
-    host_name: str
-    settings: GameSettings
-    players: list[PlayerInfo]
-    chat_messages: list[ChatMessage]
-    actions: list[GameAction]
-    
-    # Raw data for advanced users
-    raw_header: bytes = b""
-    raw_decompressed: bytes = b""
+    // 3. Parse game data
+    return p.parseGameData(header, decompressed)
+}
+
+// ParseHeaderOnly parses just the header (for quick metadata access)
+func (p *Parser) ParseHeaderOnly(filepath string) (*ReplayHeader, error) {
+    f, err := os.Open(filepath)
+    if err != nil {
+        return nil, err
+    }
+    defer f.Close()
+
+    header, _, err := parseHeader(f)
+    return header, err
+}
+
+// IterActions returns a channel for iterating actions without loading all into memory
+func (p *Parser) IterActions(filepath string) (<-chan *GameAction, <-chan error) {
+    actionCh := make(chan *GameAction)
+    errCh := make(chan error, 1)
+
+    go func() {
+        defer close(actionCh)
+        defer close(errCh)
+
+        replay, err := p.Parse(filepath)
+        if err != nil {
+            errCh <- err
+            return
+        }
+
+        for _, action := range replay.Actions {
+            actionCh <- action
+        }
+    }()
+
+    return actionCh, errCh
+}
 ```
 
-### 3. Parsing Strategy
+### 3. Error Handling (errors.go)
 
-```python
-class W3GParser:
-    """Main parser with streaming/chunked support."""
-    
-    def __init__(self, strict: bool = False):
-        self.strict = strict  # Fail on unknown data vs. skip
-        self._version_handler: VersionHandler | None = None
-    
-    def parse(self, filepath: str | Path) -> W3GReplay:
-        """Parse a complete replay file."""
-        with open(filepath, "rb") as f:
-            return self.parse_stream(f)
-    
-    def parse_stream(self, stream: BinaryIO) -> W3GReplay:
-        """Parse from any binary stream."""
-        # 1. Read and parse header
-        header_data = stream.read(HEADER_SIZE)
-        header = self._parse_header(header_data)
-        
-        # 2. Detect version and get appropriate handler
-        self._version_handler = detect_version(header_data)
-        
-        # 3. Read and decompress data blocks
-        decompressed = self._decompress_blocks(stream, header.num_compressed_blocks)
-        
-        # 4. Parse game data
-        game_data = self._parse_game_data(decompressed)
-        
-        # 5. Parse actions (can be done lazily)
-        actions = self._parse_actions(decompressed, game_data.actions_offset)
-        
-        return self._build_replay(header, game_data, actions)
-    
-    def parse_header_only(self, filepath: str | Path) -> ReplayHeader:
-        """Quick parse of just the header (for batch processing)."""
-        ...
-    
-    def iter_actions(self, filepath: str | Path) -> Iterator[GameAction]:
-        """Lazily iterate actions without loading all into memory."""
-        ...
+```go
+package w3g
+
+import "fmt"
+
+// ParseError is the base error type for parsing errors
+type ParseError struct {
+    Message string
+    Offset  *int
+}
+
+func (e *ParseError) Error() string {
+    if e.Offset != nil {
+        return fmt.Sprintf("%s at offset 0x%X", e.Message, *e.Offset)
+    }
+    return e.Message
+}
+
+// InvalidHeaderError indicates invalid or unrecognized header format
+type InvalidHeaderError struct {
+    ParseError
+}
+
+// UnsupportedVersionError indicates replay version not supported
+type UnsupportedVersionError struct {
+    ParseError
+    Version string
+}
+
+// DecompressionError indicates failed to decompress data block
+type DecompressionError struct {
+    ParseError
+}
+
+// UnknownActionError indicates unknown action type encountered
+type UnknownActionError struct {
+    ParseError
+    ActionID uint8
+}
+
+// TruncatedDataError indicates data was truncated unexpectedly
+type TruncatedDataError struct {
+    ParseError
+}
+
+// Helper functions for creating errors
+func newInvalidHeaderError(msg string) *InvalidHeaderError {
+    return &InvalidHeaderError{ParseError{Message: msg}}
+}
+
+func newDecompressionError(msg string, offset int) *DecompressionError {
+    return &DecompressionError{ParseError{Message: msg, Offset: &offset}}
+}
+
+func newTruncatedDataError(msg string, offset int) *TruncatedDataError {
+    return &TruncatedDataError{ParseError{Message: msg, Offset: &offset}}
+}
 ```
 
-### 4. Error Handling
+### 4. Constants (constants.go)
 
-```python
-# exceptions.py
+```go
+package w3g
 
-class W3GParseError(Exception):
-    """Base exception for parsing errors."""
-    def __init__(self, message: str, offset: int | None = None):
-        self.offset = offset
-        super().__init__(f"{message}" + (f" at offset 0x{offset:X}" if offset else ""))
+// MagicString is the magic bytes identifying W3G replay files (28 bytes)
+var MagicString = []byte("Warcraft III recorded game\x1a\x00")
 
-class InvalidHeaderError(W3GParseError):
-    """Invalid or unrecognized header format."""
-    pass
+// Header sizes
+const (
+    BaseHeaderSize   = 0x30 // 48 bytes
+    SubHeaderV0Size  = 0x10 // 16 bytes
+    SubHeaderV1Size  = 0x14 // 20 bytes
+    HeaderV0Total    = 0x40 // 64 bytes
+    HeaderV1Total    = 0x44 // 68 bytes
+)
 
-class UnsupportedVersionError(W3GParseError):
-    """Replay version not supported."""
-    def __init__(self, version: str):
-        super().__init__(f"Unsupported replay version: {version}")
-        self.version = version
+// Game identifiers
+const (
+    GameIDClassic  = "WAR3"
+    GameIDTFT      = "W3XP"
+    GameIDReforged = "PX3W"
+)
 
-class DecompressionError(W3GParseError):
-    """Failed to decompress data block."""
-    pass
+// Flags
+const (
+    FlagSinglePlayer = 0x0000
+    FlagMultiplayer  = 0x8000
+)
 
-class UnknownActionError(W3GParseError):
-    """Unknown action type encountered."""
-    def __init__(self, action_id: int, offset: int):
-        super().__init__(f"Unknown action type 0x{action_id:02X}", offset)
-        self.action_id = action_id
+// Observer team IDs
+const (
+    ObserverTeamClassic  = 12
+    ObserverTeamReforged = 24
+)
 
-# Usage in parser:
-def _parse_action(self, action_id: int, data: bytes, offset: int) -> GameAction | None:
-    try:
-        return self._version_handler.parse_action(action_id, data, offset)
-    except UnknownActionError as e:
-        if self.strict:
-            raise
-        # Log warning and skip
-        logger.warning(f"Skipping unknown action: {e}")
-        return None
+// Version threshold for Reforged
+const ReforgedVersionThreshold = 29
+
+// Block IDs
+const (
+    BlockLeaveGame   = 0x17
+    BlockFirstStart  = 0x1A
+    BlockSecondStart = 0x1B
+    BlockThirdStart  = 0x1C
+    BlockGameStart   = 0x19
+    BlockTimeSlotOld = 0x1E
+    BlockTimeSlot    = 0x1F
+    BlockChat        = 0x20
+    BlockChecksum    = 0x22
+    BlockForcedEnd   = 0x2F
+)
+
+// Record IDs
+const (
+    RecordHost             = 0x00
+    RecordAdditionalPlayer = 0x16
+)
+
+// Action IDs
+const (
+    ActionPause            = 0x01
+    ActionResume           = 0x02
+    ActionSetSpeed         = 0x03
+    ActionIncSpeed         = 0x04
+    ActionDecSpeed         = 0x05
+    ActionSaveGame         = 0x06
+    ActionSaveFinished     = 0x07
+    ActionAbilityNoParams  = 0x10
+    ActionAbilityTargetPos = 0x11
+    ActionAbilityPosObject = 0x12
+    ActionAbilityDropItem  = 0x13
+    ActionAbilityTwoPos    = 0x14
+    ActionChangeSelection  = 0x16
+    ActionAssignGroup      = 0x17
+    ActionSelectGroup      = 0x18
+    ActionSelectSubgroup   = 0x19
+    ActionPreSubselection  = 0x1A
+    ActionSyncSelection    = 0x1B
+    ActionSelectGroundItem = 0x1C
+    ActionCancelHeroRevival = 0x1D
+    ActionRemoveFromQueue  = 0x1E
+    ActionAllyOptions      = 0x50
+    ActionTransferResources = 0x51
+    ActionTriggerCommand   = 0x60
+    ActionEscPressed       = 0x61
+    ActionScenarioTrigger  = 0x62
+    ActionHeroSkillMenu    = 0x66
+    ActionBuildingMenu     = 0x67
+    ActionMinimapSignal    = 0x68
+    ActionContinueGameB    = 0x69
+    ActionContinueGameA    = 0x6A
+    ActionUnknown75        = 0x75
+)
+
+// Chat flags
+const (
+    ChatFlagStartup = 0x10
+    ChatFlagNormal  = 0x20
+)
+
+// Chat modes
+const (
+    ChatModeAll       = 0x00
+    ChatModeAllies    = 0x01
+    ChatModeObservers = 0x02
+)
+
+// Action names for human-readable output
+var ActionNames = map[uint8]string{
+    ActionPause:            "pause",
+    ActionResume:           "resume",
+    ActionSetSpeed:         "set_speed",
+    ActionIncSpeed:         "increase_speed",
+    ActionDecSpeed:         "decrease_speed",
+    ActionSaveGame:         "save_game",
+    ActionSaveFinished:     "save_finished",
+    ActionAbilityNoParams:  "ability",
+    ActionAbilityTargetPos: "ability_position",
+    ActionAbilityPosObject: "ability_object",
+    ActionAbilityDropItem:  "drop_item",
+    ActionAbilityTwoPos:    "ability_two_positions",
+    ActionChangeSelection:  "select_units",
+    ActionAssignGroup:      "assign_group",
+    ActionSelectGroup:      "select_group",
+    ActionSelectSubgroup:   "select_subgroup",
+    ActionPreSubselection:  "pre_subselection",
+    ActionSyncSelection:    "sync_selection",
+    ActionSelectGroundItem: "select_item",
+    ActionCancelHeroRevival: "cancel_revival",
+    ActionRemoveFromQueue:  "remove_from_queue",
+    ActionAllyOptions:      "ally_options",
+    ActionTransferResources: "transfer_resources",
+    ActionTriggerCommand:   "trigger_command",
+    ActionEscPressed:       "escape",
+    ActionScenarioTrigger:  "scenario_trigger",
+    ActionHeroSkillMenu:    "hero_skill_menu",
+    ActionBuildingMenu:     "building_menu",
+    ActionMinimapSignal:    "minimap_ping",
+    ActionContinueGameB:    "continue_game_b",
+    ActionContinueGameA:    "continue_game_a",
+    ActionUnknown75:        "unknown_75",
+}
 ```
 
-### 5. Output Formats
+### 5. Header Parsing (header.go)
 
-```python
-import json
-from dataclasses import asdict
+```go
+package w3g
 
-class W3GReplay:
-    # ... other methods ...
-    
-    def to_dict(self) -> dict:
-        """Convert to dictionary."""
-        return asdict(self)
-    
-    def to_json(self, filepath: str | Path | None = None, indent: int = 2) -> str:
-        """Export to JSON string or file."""
-        data = self.to_dict()
-        # Handle bytes and special types
-        json_str = json.dumps(data, indent=indent, default=self._json_serializer)
-        
-        if filepath:
-            Path(filepath).write_text(json_str)
-        return json_str
-    
-    @staticmethod
-    def _json_serializer(obj):
-        if isinstance(obj, bytes):
-            return obj.hex()
-        if isinstance(obj, timedelta):
-            return obj.total_seconds()
-        raise TypeError(f"Not JSON serializable: {type(obj)}")
-    
-    def to_dataframe(self) -> "pd.DataFrame":
-        """Convert actions to pandas DataFrame (requires pandas)."""
-        try:
-            import pandas as pd
-        except ImportError:
-            raise ImportError("pandas required for DataFrame export: pip install pandas")
-        
-        return pd.DataFrame([asdict(a) for a in self.actions])
+import (
+    "bytes"
+    "encoding/binary"
+    "io"
+)
+
+// parseHeader parses the W3G file header from a reader
+func parseHeader(r io.Reader) (*ReplayHeader, []byte, error) {
+    // Read base header (48 bytes)
+    baseHeader := make([]byte, BaseHeaderSize)
+    if _, err := io.ReadFull(r, baseHeader); err != nil {
+        return nil, nil, newTruncatedDataError("file too small for header", len(baseHeader))
+    }
+
+    // Validate magic string
+    magic := baseHeader[:28]
+    if !bytes.Equal(magic, MagicString) {
+        return nil, nil, newInvalidHeaderError(
+            fmt.Sprintf("invalid magic string: %v, expected %v", magic, MagicString),
+        )
+    }
+
+    // Parse base header fields using little-endian
+    headerSize := binary.LittleEndian.Uint32(baseHeader[0x1C:])
+    compressedSize := binary.LittleEndian.Uint32(baseHeader[0x20:])
+    headerVersion := binary.LittleEndian.Uint32(baseHeader[0x24:])
+    decompressedSize := binary.LittleEndian.Uint32(baseHeader[0x28:])
+    numBlocks := binary.LittleEndian.Uint32(baseHeader[0x2C:])
+
+    // Determine subheader size based on version
+    var subHeaderSize int
+    switch headerVersion {
+    case 0:
+        subHeaderSize = SubHeaderV0Size
+    case 1:
+        subHeaderSize = SubHeaderV1Size
+    default:
+        return nil, nil, newInvalidHeaderError(
+            fmt.Sprintf("unknown header version: %d", headerVersion),
+        )
+    }
+
+    // Read subheader
+    subHeader := make([]byte, subHeaderSize)
+    if _, err := io.ReadFull(r, subHeader); err != nil {
+        return nil, nil, newTruncatedDataError("file too small for subheader", BaseHeaderSize)
+    }
+
+    header := &ReplayHeader{
+        Magic:               magic,
+        HeaderSize:          headerSize,
+        CompressedSize:      compressedSize,
+        HeaderVersion:       headerVersion,
+        DecompressedSize:    decompressedSize,
+        NumCompressedBlocks: numBlocks,
+    }
+
+    // Parse subheader based on version
+    if headerVersion == 0 {
+        // Version 0 (Classic, patches <= 1.06)
+        header.Version = uint32(binary.LittleEndian.Uint16(subHeader[0x02:]))
+        header.BuildNumber = binary.LittleEndian.Uint16(subHeader[0x04:])
+        header.Flags = binary.LittleEndian.Uint16(subHeader[0x06:])
+        header.DurationMs = binary.LittleEndian.Uint32(subHeader[0x08:])
+        header.CRC32 = binary.LittleEndian.Uint32(subHeader[0x0C:])
+        header.GameIdentifier = "WAR3"
+    } else {
+        // Version 1 (Expansion, patches >= 1.07)
+        header.GameIdentifier = string(subHeader[0x00:0x04])
+        header.Version = binary.LittleEndian.Uint32(subHeader[0x04:])
+        header.BuildNumber = binary.LittleEndian.Uint16(subHeader[0x08:])
+        header.Flags = binary.LittleEndian.Uint16(subHeader[0x0A:])
+        header.DurationMs = binary.LittleEndian.Uint32(subHeader[0x0C:])
+        header.CRC32 = binary.LittleEndian.Uint32(subHeader[0x10:])
+    }
+
+    rawHeader := append(baseHeader, subHeader...)
+    header.RawHeader = rawHeader
+
+    return header, rawHeader, nil
+}
+```
+
+### 6. Decompression (decompressor.go)
+
+```go
+package w3g
+
+import (
+    "bytes"
+    "compress/zlib"
+    "encoding/binary"
+    "io"
+)
+
+// decompressBlocks decompresses all data blocks from reader
+func decompressBlocks(r io.Reader, header *ReplayHeader) ([]byte, error) {
+    var result bytes.Buffer
+    isReforged := header.IsReforged()
+
+    for i := uint32(0); i < header.NumCompressedBlocks; i++ {
+        var compressedSize, decompressedSize uint32
+
+        if isReforged {
+            // Reforged: 12-byte header
+            blockHeader := make([]byte, 12)
+            if _, err := io.ReadFull(r, blockHeader); err != nil {
+                return nil, newTruncatedDataError(
+                    fmt.Sprintf("block %d header truncated", i), int(result.Len()),
+                )
+            }
+            compressedSize = uint32(binary.LittleEndian.Uint16(blockHeader[0:]))
+            decompressedSize = binary.LittleEndian.Uint32(blockHeader[4:])
+        } else {
+            // Classic: 8-byte header
+            blockHeader := make([]byte, 8)
+            if _, err := io.ReadFull(r, blockHeader); err != nil {
+                return nil, newTruncatedDataError(
+                    fmt.Sprintf("block %d header truncated", i), int(result.Len()),
+                )
+            }
+            compressedSize = uint32(binary.LittleEndian.Uint16(blockHeader[0:]))
+            decompressedSize = uint32(binary.LittleEndian.Uint16(blockHeader[2:]))
+        }
+
+        // Read compressed data
+        compressedData := make([]byte, compressedSize)
+        if _, err := io.ReadFull(r, compressedData); err != nil {
+            return nil, newTruncatedDataError(
+                fmt.Sprintf("block %d data truncated: expected %d bytes", i, compressedSize),
+                int(result.Len()),
+            )
+        }
+
+        // Decompress
+        var decompressed []byte
+        var err error
+
+        if isReforged {
+            // Reforged uses zlib with header
+            decompressed, err = decompressZlib(compressedData)
+        } else {
+            // Classic uses raw deflate
+            decompressed, err = decompressDeflate(compressedData)
+            if err != nil {
+                // Fallback to zlib with header
+                decompressed, err = decompressZlib(compressedData)
+            }
+        }
+
+        if err != nil {
+            return nil, newDecompressionError(
+                fmt.Sprintf("block %d decompression failed: %v", i, err),
+                int(result.Len()),
+            )
+        }
+
+        result.Write(decompressed)
+    }
+
+    return result.Bytes(), nil
+}
+
+func decompressZlib(data []byte) ([]byte, error) {
+    r, err := zlib.NewReader(bytes.NewReader(data))
+    if err != nil {
+        return nil, err
+    }
+    defer r.Close()
+
+    return io.ReadAll(r)
+}
+
+func decompressDeflate(data []byte) ([]byte, error) {
+    // For raw deflate, we need to use flate package directly
+    // zlib.NewReader expects a zlib header, so we use flate.NewReader
+    r := flate.NewReader(bytes.NewReader(data))
+    defer r.Close()
+
+    return io.ReadAll(r)
+}
 ```
 
 ---
 
-## CLI Requirements
+## CLI Requirements (cmd/w3g-parse/main.go)
 
-```python
-# cli.py
-import click
-import json
-from pathlib import Path
-from .parser import W3GParser
+```go
+package main
 
-@click.group()
-@click.version_option()
-def main():
-    """W3G Replay Parser - Parse Warcraft 3 replay files."""
-    pass
+import (
+    "encoding/json"
+    "fmt"
+    "os"
+    "time"
 
-@main.command()
-@click.argument("replay", type=click.Path(exists=True))
-@click.option("--format", "-f", type=click.Choice(["text", "json"]), default="text")
-@click.option("--output", "-o", type=click.Path(), help="Output file (default: stdout)")
-@click.option("--indent", type=int, default=2, help="JSON indent level")
-def parse(replay: str, format: str, output: str | None, indent: int):
-    """Parse a replay file and display information."""
-    parser = W3GParser()
-    result = parser.parse(replay)
-    
-    if format == "json":
-        out = result.to_json(indent=indent)
-    else:
-        out = format_replay_text(result)
-    
-    if output:
-        Path(output).write_text(out)
-    else:
-        click.echo(out)
+    "github.com/spf13/cobra"
+    "github.com/yourusername/w3g-parser/pkg/w3g"
+)
 
-@main.command()
-@click.argument("replay", type=click.Path(exists=True))
-def players(replay: str):
-    """Show player information."""
-    parser = W3GParser()
-    result = parser.parse(replay)
-    
-    for p in result.players:
-        click.echo(f"{p.name} - {p.race.name} (Team {p.team}) - APM: {p.apm:.1f}")
+func formatDuration(d time.Duration) string {
+    h := int(d.Hours())
+    m := int(d.Minutes()) % 60
+    s := int(d.Seconds()) % 60
+    if h > 0 {
+        return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+    }
+    return fmt.Sprintf("%d:%02d", m, s)
+}
 
-@main.command()
-@click.argument("replay", type=click.Path(exists=True))
-def chat(replay: str):
-    """Show chat messages."""
-    parser = W3GParser()
-    result = parser.parse(replay)
-    
-    for msg in result.chat_messages:
-        ts = str(msg.timestamp).split(".")[0]  # Remove microseconds
-        click.echo(f"[{ts}] {msg.player_name}: {msg.message}")
+func main() {
+    rootCmd := &cobra.Command{
+        Use:   "w3g-parse",
+        Short: "W3G Replay Parser - Parse Warcraft 3 replay files",
+    }
 
-@main.command()
-@click.argument("replay", type=click.Path(exists=True))
-def info(replay: str):
-    """Show basic replay information (fast, header only)."""
-    parser = W3GParser()
-    header = parser.parse_header_only(replay)
-    
-    click.echo(f"Version: {header.version_string}")
-    click.echo(f"Duration: {header.duration}")
-    click.echo(f"Build: {header.build_number}")
+    // parse command
+    parseCmd := &cobra.Command{
+        Use:   "parse [replay]",
+        Short: "Parse a replay file and display information",
+        Args:  cobra.ExactArgs(1),
+        RunE:  runParse,
+    }
+    parseCmd.Flags().StringP("format", "f", "text", "Output format (text/json)")
+    parseCmd.Flags().StringP("output", "o", "", "Output file")
+    parseCmd.Flags().Int("indent", 2, "JSON indent level")
 
-@main.command()
-@click.argument("replays", type=click.Path(exists=True), nargs=-1)
-@click.option("--output", "-o", type=click.Path(), required=True)
-def batch(replays: tuple[str], output: str):
-    """Parse multiple replays to a JSON array."""
-    parser = W3GParser(strict=False)
-    results = []
-    
-    for replay_path in replays:
-        try:
-            result = parser.parse(replay_path)
-            results.append(result.to_dict())
-        except Exception as e:
-            click.echo(f"Error parsing {replay_path}: {e}", err=True)
-    
-    Path(output).write_text(json.dumps(results, indent=2, default=str))
-    click.echo(f"Parsed {len(results)} replays to {output}")
+    // players command
+    playersCmd := &cobra.Command{
+        Use:   "players [replay]",
+        Short: "Show player information",
+        Args:  cobra.ExactArgs(1),
+        RunE:  runPlayers,
+    }
 
-if __name__ == "__main__":
-    main()
+    // chat command
+    chatCmd := &cobra.Command{
+        Use:   "chat [replay]",
+        Short: "Show chat messages",
+        Args:  cobra.ExactArgs(1),
+        RunE:  runChat,
+    }
+
+    // info command
+    infoCmd := &cobra.Command{
+        Use:   "info [replay]",
+        Short: "Show basic replay information (fast, header only)",
+        Args:  cobra.ExactArgs(1),
+        RunE:  runInfo,
+    }
+
+    // actions command
+    actionsCmd := &cobra.Command{
+        Use:   "actions [replay]",
+        Short: "Show game actions",
+        Args:  cobra.ExactArgs(1),
+        RunE:  runActions,
+    }
+    actionsCmd.Flags().IntP("limit", "n", 50, "Maximum actions to show")
+    actionsCmd.Flags().BoolP("detail", "d", false, "Show detailed action information")
+    actionsCmd.Flags().StringP("filter", "f", "", "Filter by action type")
+
+    // batch command
+    batchCmd := &cobra.Command{
+        Use:   "batch [replays...]",
+        Short: "Parse multiple replays to a JSON array",
+        Args:  cobra.MinimumNArgs(1),
+        RunE:  runBatch,
+    }
+    batchCmd.Flags().StringP("output", "o", "", "Output JSON file (required)")
+    batchCmd.MarkFlagRequired("output")
+
+    rootCmd.AddCommand(parseCmd, playersCmd, chatCmd, infoCmd, actionsCmd, batchCmd)
+
+    if err := rootCmd.Execute(); err != nil {
+        os.Exit(1)
+    }
+}
+
+func runParse(cmd *cobra.Command, args []string) error {
+    parser := w3g.NewParser()
+    replay, err := parser.Parse(args[0])
+    if err != nil {
+        return err
+    }
+
+    format, _ := cmd.Flags().GetString("format")
+    output, _ := cmd.Flags().GetString("output")
+
+    var result string
+    if format == "json" {
+        data, _ := replay.ToJSON(true)
+        result = string(data)
+    } else {
+        result = formatReplayText(replay)
+    }
+
+    if output != "" {
+        return os.WriteFile(output, []byte(result), 0644)
+    }
+
+    fmt.Println(result)
+    return nil
+}
+
+// Additional command implementations...
 ```
 
 ---
 
 ## Target Public API
 
-```python
-from w3g_parser import W3GReplay, W3GParser
+```go
+package main
 
-# Simple usage - class method
-replay = W3GReplay.parse("my_replay.w3g")
+import (
+    "fmt"
+    "github.com/yourusername/w3g-parser/pkg/w3g"
+)
 
-# Or via parser instance for configuration
-parser = W3GParser(strict=False)
-replay = parser.parse("my_replay.w3g")
+func main() {
+    // Simple usage - parse a file
+    parser := w3g.NewParser()
+    replay, err := parser.Parse("my_replay.w3g")
+    if err != nil {
+        panic(err)
+    }
 
-# Access parsed data
-print(f"Game: {replay.game_name}")
-print(f"Map: {replay.map_name}")
-print(f"Duration: {replay.header.duration}")
-print(f"Version: {replay.header.version_string}")
+    // Access parsed data
+    fmt.Printf("Game: %s\n", replay.GameName)
+    fmt.Printf("Map: %s\n", replay.MapName)
+    fmt.Printf("Duration: %s\n", replay.Header.Duration())
+    fmt.Printf("Version: %s\n", replay.Header.VersionString())
 
-# Players
-for player in replay.players:
-    print(f"  {player.name} ({player.race.name}) - APM: {player.apm:.1f}")
+    // Players
+    for _, player := range replay.Players {
+        fmt.Printf("  %s (%s) - APM: %.1f\n",
+            player.Name, player.Race.String(), player.APM)
+    }
 
-# Chat log
-for chat in replay.chat_messages:
-    print(f"[{chat.timestamp}] {chat.player_name}: {chat.message}")
+    // Chat log
+    for _, chat := range replay.ChatMessages {
+        fmt.Printf("[%s] %s: %s\n",
+            chat.Timestamp(), chat.PlayerName, chat.Message)
+    }
 
-# Iterate actions
-for action in replay.actions:
-    if action.action_name == "unit_order":
-        print(f"{action.timestamp_ms}ms: Player {action.player_id} - {action.data}")
+    // Iterate actions
+    for _, action := range replay.Actions {
+        if action.ActionName == "ability_position" {
+            fmt.Printf("%dms: Player %d - %v\n",
+                action.TimestampMs, action.PlayerID, action.Data)
+        }
+    }
 
-# Export
-replay.to_json("output.json")
-data = replay.to_dict()
+    // Export to JSON
+    jsonData, _ := replay.ToJSON(true)
+    fmt.Println(string(jsonData))
 
-# Quick header check (no full parse)
-header = W3GParser().parse_header_only("replay.w3g")
-print(f"Version: {header.version_string}, Duration: {header.duration}")
+    // Quick header check (no full parse)
+    header, _ := parser.ParseHeaderOnly("replay.w3g")
+    fmt.Printf("Version: %s, Duration: %s\n",
+        header.VersionString(), header.Duration())
 
-# Memory-efficient action iteration
-for action in parser.iter_actions("large_replay.w3g"):
-    process_action(action)
-```
-
----
-
-## Documentation Requirements
-
-Create a `docs/FORMAT.md` that documents everything discovered:
-
-```markdown
-# W3G Binary Format Specification
-
-This document describes the W3G replay format as reverse-engineered from
-existing parsers and replay analysis.
-
-## Sources
-
-- [repo1](url) - Description of what was learned
-- [repo2](url) - Description
-- ...
-
-## Header Structure
-
-### Classic Format (pre-1.32)
-
-| Offset | Size | Type | Description |
-|--------|------|------|-------------|
-| 0x00   | 28   | char | Magic string "Warcraft III recorded game\x1A" |
-| 0x1C   | 4    | u32  | Header size (offset to compressed data) |
-| ...    | ...  | ...  | ... |
-
-### Reforged Format (1.32+)
-
-| Offset | Size | Type | Description |
-|--------|------|------|-------------|
-| ...    | ...  | ...  | ... |
-
-## Compressed Data Blocks
-
-...
-
-## Action Types
-
-| ID   | Name           | Payload Structure |
-|------|----------------|-------------------|
-| 0x10 | Unit Ability   | ... |
-| 0x11 | Unit Order     | ... |
-| ...  | ...            | ... |
-
-## Unknown/Undocumented Fields
-
-- Offset 0x?? in header: Unknown 4 bytes, observed values: ...
-- Action 0x??: Unknown action, appears in Reforged only
+    // Memory-efficient action iteration
+    actionCh, errCh := parser.IterActions("large_replay.w3g")
+    for action := range actionCh {
+        processAction(action)
+    }
+    if err := <-errCh; err != nil {
+        panic(err)
+    }
+}
 ```
 
 ---
 
 ## Testing Strategy
 
-```python
-# tests/conftest.py
-import pytest
-from pathlib import Path
+```go
+// tests/parser_test.go
+package tests
 
-@pytest.fixture
-def sample_replay_path():
-    """Path to a sample replay for testing (user must provide)."""
-    path = Path("tests/fixtures/sample.w3g")
-    if not path.exists():
-        pytest.skip("No sample replay available")
-    return path
+import (
+    "os"
+    "path/filepath"
+    "testing"
 
-@pytest.fixture
-def mock_classic_header():
-    """Minimal valid classic header bytes for unit testing."""
-    return bytes([
-        # Magic string (28 bytes)
-        *b"Warcraft III recorded game\x1A\x00",
-        # Header size (4 bytes, little endian)
-        0x44, 0x00, 0x00, 0x00,
-        # ... etc
-    ])
+    "github.com/yourusername/w3g-parser/pkg/w3g"
+)
 
-# tests/test_header.py
-def test_detect_classic_version(mock_classic_header):
-    from w3g_parser.versions import detect_version, W3GVersion
-    
-    version, handler = detect_version(mock_classic_header)
-    assert version == W3GVersion.CLASSIC_TFT
+func TestParseHeader(t *testing.T) {
+    // Test with mock header bytes
+    mockHeader := append(
+        []byte("Warcraft III recorded game\x1a\x00"),
+        // Header size, compressed size, etc.
+        0x44, 0x00, 0x00, 0x00, // header size
+        // ... more bytes
+    )
 
-def test_parse_header(mock_classic_header):
-    from w3g_parser.header import parse_header
-    
-    header = parse_header(mock_classic_header)
-    assert header.magic == b"Warcraft III recorded game\x1A\x00"
-    # ... more assertions
+    // Test header parsing
+    // ...
+}
 
-# tests/test_parser.py
-def test_full_parse(sample_replay_path):
-    from w3g_parser import W3GParser
-    
-    parser = W3GParser()
-    replay = parser.parse(sample_replay_path)
-    
-    assert replay.header is not None
-    assert len(replay.players) > 0
-    assert replay.map_name != ""
+func TestFullParse(t *testing.T) {
+    samplePath := filepath.Join("testdata", "sample.w3g")
+    if _, err := os.Stat(samplePath); os.IsNotExist(err) {
+        t.Skip("No sample replay available")
+    }
 
-def test_partial_parse_on_corruption():
-    """Parser should extract what it can from corrupted replays."""
-    from w3g_parser import W3GParser
-    
-    parser = W3GParser(strict=False)
-    # Create truncated/corrupted data
-    # ... test that header parsing still works
+    parser := w3g.NewParser()
+    replay, err := parser.Parse(samplePath)
+    if err != nil {
+        t.Fatalf("Parse failed: %v", err)
+    }
+
+    if replay.Header == nil {
+        t.Error("Header is nil")
+    }
+
+    if len(replay.Players) == 0 {
+        t.Error("No players parsed")
+    }
+
+    if replay.MapName == "" {
+        t.Error("Map name is empty")
+    }
+}
+
+func TestReforgedReplay(t *testing.T) {
+    // Test Reforged-specific parsing
+    // ...
+}
+
+func TestClassicReplay(t *testing.T) {
+    // Test Classic format parsing
+    // ...
+}
 ```
+
+---
+
+## Documentation Requirements
+
+Create a `docs/FORMAT.md` that documents everything discovered (see existing Python version for reference).
 
 ---
 
@@ -737,11 +1226,11 @@ def test_partial_parse_on_corruption():
    - Which existing parser you learned this from
 
 2. **Mark uncertainty clearly:**
-   ```python
-   # Unknown field - possibly CRC or reserved
-   # Observed values: 0x00000000, 0xFFFFFFFF
-   # See: github.com/example/w3gjs/blob/main/src/parser.js#L123
-   self.unknown_field_1 = struct.unpack("<I", data[offset:offset+4])[0]
+   ```go
+   // Unknown field - possibly CRC or reserved
+   // Observed values: 0x00000000, 0xFFFFFFFF
+   // See: github.com/example/w3gjs/blob/main/src/parser.js#L123
+   unknownField := binary.LittleEndian.Uint32(data[offset:])
    ```
 
 3. **Handle unknowns gracefully:**
@@ -757,8 +1246,15 @@ def test_partial_parse_on_corruption():
 
 5. **Performance considerations:**
    - Large replays can have millions of actions
-   - Provide lazy iteration options
+   - Provide lazy iteration options via channels
    - Consider memory-mapped file access for very large files
+
+6. **Go idioms:**
+   - Use `io.Reader` interfaces for flexibility
+   - Return errors, don't panic
+   - Use `encoding/binary` for binary parsing
+   - Keep public API minimal and clean
+   - Use struct methods for computed properties
 
 ---
 
@@ -767,12 +1263,12 @@ def test_partial_parse_on_corruption():
 - [ ] Researched at least 5 existing w3g parser implementations
 - [ ] Documented discovered format in FORMAT.md
 - [ ] Parser handles Classic WC3 replays
-- [ ] Parser handles Reforged replays  
+- [ ] Parser handles Reforged replays
 - [ ] Version auto-detection works
-- [ ] All data models have full type hints
-- [ ] Error handling is graceful in non-strict mode
+- [ ] All data models have proper Go types
+- [ ] Error handling returns proper error types
 - [ ] CLI tool works with all commands
 - [ ] JSON export works correctly
 - [ ] Unit tests pass
-- [ ] Code passes ruff and mypy checks
+- [ ] Code passes `go vet` and `golint` checks
 - [ ] README has usage examples
