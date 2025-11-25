@@ -178,23 +178,77 @@ def batch(replays: tuple[str, ...], output: str):
 @main.command()
 @click.argument("replay", type=click.Path(exists=True))
 @click.option("--limit", "-n", type=int, default=50, help="Maximum actions to show")
-def actions(replay: str, limit: int):
+@click.option("--detail", "-d", is_flag=True, help="Show detailed action information")
+@click.option(
+    "--filter",
+    "-f",
+    "action_filter",
+    type=str,
+    help="Filter by action type (e.g., ability_position, select_units)",
+)
+def actions(replay: str, limit: int, detail: bool, action_filter: str | None):
     """Show game actions."""
+    from w3g_parser.actions import decode_item_id
+
     try:
         parser = W3GParser()
         result = parser.parse(replay)
 
-        total = len(result.actions)
+        # Filter actions if requested
+        filtered_actions = result.actions
+        if action_filter:
+            filtered_actions = [
+                a for a in result.actions if action_filter.lower() in a.action_name.lower()
+            ]
+
+        total = len(filtered_actions)
         shown = min(limit, total)
 
-        click.echo(f"Game Actions (showing {shown} of {total}):")
+        filter_note = f" matching '{action_filter}'" if action_filter else ""
+        click.echo(f"Game Actions (showing {shown} of {total}{filter_note}):")
         click.echo("-" * 70)
 
-        for action in result.actions[:limit]:
+        for action in filtered_actions[:limit]:
             ts = format_duration(action.timestamp)
             player = result.get_player(action.player_id)
             player_name = player.name if player else f"Player {action.player_id}"
-            click.echo(f"[{ts}] {player_name}: {action.action_name}")
+
+            if detail:
+                # Show detailed action info
+                detail_parts = []
+
+                # Decode item/ability ID
+                if "item_id" in action.data:
+                    item_bytes = action.data["item_id"]
+                    if isinstance(item_bytes, bytes):
+                        decoded = decode_item_id(item_bytes)
+                        detail_parts.append(decoded)
+
+                # Add coordinates
+                if "target_x" in action.data and "target_y" in action.data:
+                    x, y = action.data["target_x"], action.data["target_y"]
+                    if x == x and y == y:  # Check for NaN
+                        detail_parts.append(f"at ({x:.0f}, {y:.0f})")
+
+                # Add unit count
+                if "unit_count" in action.data:
+                    count = action.data["unit_count"]
+                    detail_parts.append(f"{count} unit(s)")
+
+                # Add group number
+                if "group" in action.data:
+                    detail_parts.append(f"group {action.data['group']}")
+
+                # Add resource transfer info
+                if "gold" in action.data or "lumber" in action.data:
+                    gold = action.data.get("gold", 0)
+                    lumber = action.data.get("lumber", 0)
+                    detail_parts.append(f"gold={gold}, lumber={lumber}")
+
+                detail_str = " - " + " ".join(detail_parts) if detail_parts else ""
+                click.echo(f"[{ts}] {player_name}: {action.action_name}{detail_str}")
+            else:
+                click.echo(f"[{ts}] {player_name}: {action.action_name}")
 
         if total > limit:
             click.echo(f"\n... and {total - limit} more actions")

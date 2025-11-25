@@ -4,6 +4,204 @@ import struct
 import logging
 from typing import Iterator
 
+logger = logging.getLogger(__name__)
+
+
+# Common ability/item ID mappings (4-char codes reversed)
+ITEM_ID_NAMES: dict[str, str] = {
+    # Move/Attack commands (numeric IDs)
+    "ability_3": "Right-click / Smart",
+    "ability_6": "Move",
+    "ability_7": "Attack",
+    "ability_12": "Hold Position",
+    "ability_13": "Patrol",
+    "ability_19": "Stop",
+
+    # Hero abilities (numeric IDs)
+    "ability_89": "Rally Point",
+    "ability_121": "Blink",
+    "ability_122": "Fan of Knives",
+    "ability_123": "Mana Burn",
+    "ability_124": "Immolation",
+    "ability_125": "Metamorphosis",
+    "ability_126": "Evasion",
+    "ability_127": "Shadow Strike",
+    "ability_128": "Vengeance",
+    "ability_129": "Spirit of Vengeance",
+
+    # Human buildings
+    "halt": "Altar of Kings",
+    "hbar": "Barracks",
+    "hbla": "Blacksmith",
+    "hhou": "Farm",
+    "hgra": "Gryphon Aviary",
+    "hars": "Arcane Sanctum",
+    "hlum": "Lumber Mill",
+    "htow": "Town Hall",
+    "hkee": "Keep",
+    "hcas": "Castle",
+    "harm": "Workshop",
+    "hwtw": "Scout Tower",
+    "hgtw": "Guard Tower",
+    "hctw": "Cannon Tower",
+    "hatw": "Arcane Tower",
+
+    # Human units
+    "hpea": "Peasant",
+    "hfoo": "Footman",
+    "hrif": "Rifleman",
+    "hkni": "Knight",
+    "hmpr": "Priest",
+    "hsor": "Sorceress",
+    "hspt": "Spell Breaker",
+    "hmtm": "Mortar Team",
+    "hgyr": "Flying Machine",
+    "hgry": "Gryphon Rider",
+    "hmtt": "Siege Engine",
+
+    # Human heroes
+    "Hamg": "Archmage",
+    "Hblm": "Blood Mage",
+    "Hmkg": "Mountain King",
+    "Hpal": "Paladin",
+
+    # Orc buildings
+    "oalt": "Altar of Storms",
+    "obar": "Barracks",
+    "ofor": "War Mill",
+    "ogre": "Great Hall",
+    "ostr": "Stronghold",
+    "ofrt": "Fortress",
+    "obea": "Beastiary",
+    "osld": "Spirit Lodge",
+    "otrb": "Orc Burrow",
+    "ovln": "Voodoo Lounge",
+    "otau": "Tauren Totem",
+    "owtw": "Watch Tower",
+
+    # Orc units
+    "opeo": "Peon",
+    "ogru": "Grunt",
+    "ohun": "Headhunter",
+    "orai": "Raider",
+    "okod": "Kodo Beast",
+    "oshm": "Shaman",
+    "odoc": "Witch Doctor",
+    "ospw": "Spirit Walker",
+    "otau": "Tauren",
+    "owyv": "Wind Rider",
+    "otbr": "Troll Batrider",
+
+    # Orc heroes
+    "Obla": "Blademaster",
+    "Ofar": "Far Seer",
+    "Otch": "Tauren Chieftain",
+    "Oshd": "Shadow Hunter",
+
+    # Night Elf buildings
+    "eate": "Altar of Elders",
+    "eaom": "Ancient of War",
+    "eaow": "Ancient of Wonders",
+    "eaoe": "Ancient of Lore",
+    "edob": "Hunter's Hall",
+    "etol": "Tree of Life",
+    "etoa": "Tree of Ages",
+    "etoe": "Tree of Eternity",
+    "emow": "Moon Well",
+    "eden": "Ancient of Wind",
+    "edos": "Chimaera Roost",
+
+    # Night Elf units
+    "ewsp": "Wisp",
+    "earc": "Archer",
+    "esen": "Huntress",
+    "ebal": "Glaive Thrower",
+    "edry": "Dryad",
+    "edot": "Druid of the Talon",
+    "edoc": "Druid of the Claw",
+    "emtg": "Mountain Giant",
+    "efdr": "Faerie Dragon",
+    "ehip": "Hippogryph",
+    "echm": "Chimaera",
+
+    # Night Elf heroes
+    "Edem": "Demon Hunter",
+    "Ekee": "Keeper of the Grove",
+    "Emoo": "Priestess of the Moon",
+    "Ewar": "Warden",
+
+    # Undead buildings
+    "uaod": "Altar of Darkness",
+    "unpl": "Necropolis",
+    "unp1": "Halls of the Dead",
+    "unp2": "Black Citadel",
+    "usep": "Crypt",
+    "ugrv": "Graveyard",
+    "uzig": "Ziggurat",
+    "uzg1": "Spirit Tower",
+    "uzg2": "Nerubian Tower",
+    "uslh": "Slaughterhouse",
+    "utod": "Temple of the Damned",
+    "usap": "Sacrificial Pit",
+    "ubon": "Boneyard",
+    "utom": "Tomb of Relics",
+
+    # Undead units
+    "uaco": "Acolyte",
+    "ugho": "Ghoul",
+    "ucry": "Crypt Fiend",
+    "ugar": "Gargoyle",
+    "uabo": "Abomination",
+    "umtw": "Meat Wagon",
+    "unec": "Necromancer",
+    "uban": "Banshee",
+    "uobs": "Obsidian Statue",
+    "ubsp": "Destroyer",
+    "ufro": "Frost Wyrm",
+    "ushd": "Shade",
+
+    # Undead heroes
+    "Udea": "Death Knight",
+    "Udre": "Dread Lord",
+    "Ulic": "Lich",
+    "Ucrl": "Crypt Lord",
+}
+
+
+def decode_item_id(item_bytes: bytes) -> str:
+    """Decode a 4-byte item/ability ID to human-readable string.
+
+    Item IDs come in two formats:
+    1. String IDs: 4 ASCII chars in reverse order (e.g., b'tlah' -> 'halt')
+    2. Numeric IDs: XX XX 0D 00 format for ability commands
+
+    Args:
+        item_bytes: 4-byte item ID
+
+    Returns:
+        Human-readable name or hex string
+    """
+    if len(item_bytes) != 4:
+        return item_bytes.hex()
+
+    # Check if numeric ID (XX XX 0D 00)
+    if item_bytes[2:4] == b'\x0d\x00':
+        ability_num = struct.unpack('<H', item_bytes[0:2])[0]
+        key = f"ability_{ability_num}"
+        return ITEM_ID_NAMES.get(key, key)
+
+    # Try to decode as string ID
+    try:
+        s = item_bytes.decode('ascii')
+        if all(c.isalnum() or c in '_\x00' for c in s):
+            # Reverse the string (WC3 stores them backwards)
+            code = s.rstrip('\x00')[::-1]
+            return ITEM_ID_NAMES.get(code, code)
+    except (UnicodeDecodeError, ValueError):
+        pass
+
+    return item_bytes.hex()
+
 from w3g_parser.constants import (
     ACTION_ABILITY_DROP_ITEM,
     ACTION_ABILITY_NO_PARAMS,
@@ -39,8 +237,6 @@ from w3g_parser.constants import (
     ACTION_UNKNOWN_75,
 )
 from w3g_parser.models import GameAction
-
-logger = logging.getLogger(__name__)
 
 # Action names for human-readable output
 ACTION_NAMES: dict[int, str] = {
@@ -149,10 +345,11 @@ def parse_action(
                 offset += action_size - 1 - flags_size
 
         elif action_id == ACTION_ABILITY_TARGET_POS:
+            # Structure: flags(2) + item_id(4) + unknown(8) + x(4) + y(4) = 22 bytes
             if version >= 13:
-                action_size = 21
+                action_size = 22
             else:
-                action_size = 20
+                action_size = 21
             if offset + action_size - 1 <= len(data):
                 flags_size = 2 if version >= 13 else 1
                 action_data["ability_flags"] = int.from_bytes(
@@ -161,8 +358,8 @@ def parse_action(
                 offset += flags_size
                 action_data["item_id"] = data[offset : offset + 4]
                 offset += 4
-                # Skip unknowns and read coordinates
-                offset += 4  # unknowns
+                # Skip unknowns (8 bytes) and read coordinates
+                offset += 8  # unknowns
                 if offset + 8 <= len(data):
                     x, y = struct.unpack_from("<ff", data, offset)
                     action_data["target_x"] = x
@@ -170,10 +367,12 @@ def parse_action(
                 offset += 8
 
         elif action_id == ACTION_ABILITY_POS_OBJECT:
+            # Structure: flags(2) + item_id(4) + unknown(8) + x(4) + y(4) + obj1(4) + obj2(4) = 30
+            # But observed payloads are 27 bytes, so structure may vary
             if version >= 13:
-                action_size = 29
+                action_size = 26  # Adjusted based on actual payload
             else:
-                action_size = 28
+                action_size = 25
             if offset + action_size - 1 <= len(data):
                 flags_size = 2 if version >= 13 else 1
                 action_data["ability_flags"] = int.from_bytes(
@@ -182,17 +381,19 @@ def parse_action(
                 offset += flags_size
                 action_data["item_id"] = data[offset : offset + 4]
                 offset += 4
-                offset += 4  # unknowns
+                offset += 8  # unknowns (8 bytes)
                 if offset + 8 <= len(data):
                     x, y = struct.unpack_from("<ff", data, offset)
                     action_data["target_x"] = x
                     action_data["target_y"] = y
                 offset += 8
                 # Object IDs
-                action_data["object_id_1"] = data[offset : offset + 4]
-                offset += 4
-                action_data["object_id_2"] = data[offset : offset + 4]
-                offset += 4
+                if offset + 4 <= len(data):
+                    action_data["object_id_1"] = data[offset : offset + 4]
+                    offset += 4
+                if offset + 4 <= len(data):
+                    action_data["object_id_2"] = data[offset : offset + 4]
+                    offset += 4
 
         elif action_id == ACTION_ABILITY_DROP_ITEM:
             if version >= 13:
